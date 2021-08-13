@@ -12,26 +12,22 @@ from ftplib import FTP
 from pathlib import Path
 import ftplib
 import os
+import time
 import os.path
 import re
 import gzip
+
+from progressbar import AnimatedMarker, Bar, BouncingBar, Counter, ETA, \
+    AdaptiveETA, FileTransferSpeed, FormatLabel, Percentage, \
+    ProgressBar, ReverseBar, RotatingMarker, \
+    SimpleProgress, Timer, UnknownLength
 
 ftp = FTP('ftp.us.debian.org') #debian mirror
 ftp.login() #anon login
 ftp.cwd('debian/dists') #initial distrib directory
 
-print("---Distribution listing---")
-total = 0
-mlsd_errored = "False"
-
-try:
-    for line in ftp.mlsd():
-        total += 1
-        print(line)
-    print("Total {} distributions available\n---End of listing---".format(total))
-except ftplib.error_perm as err:
-    print("This server does not support MLSD, it returned: {}\n---End of listing---\n".format(err))
-    mlsd_errored = "True"
+pbar = 0
+file = 0
 
 #remove tmp files
 def localtmpclear():
@@ -40,19 +36,42 @@ def localtmpclear():
         for file in files:
             os.remove(os.path.join(root, file))
 
-#TODO: path constructor to reduce code duplication
-def constructpath(dir):
-    pass
+def file_write(data):
+    global file
+    file.write(data)
+    global pbar
+    pbar += len(data)
+
+def progress(remote, local):
+    global pbar
+    global file
+    file = open(local, 'wb')
+    size = ftp.size(remote)
+
+    pbar = ProgressBar(max_value=int(size))
+    pbar.start()
+
+    ftp.retrbinary("RETR " + remote, file_write)
+    os._exit(0)
+
 
 def pkgdl(pkgdir):
-    ftp.pasv(true)
-    ftp.cwd("/") #go back to ftp root
-    print(ftp.size("debian/" + pkgdir))
+    #ftp.set_pasv(True) #try to set passive mode this way
+    ftp.sendcmd("pass") #just a precaution in case the server spazzes out
     pkgname = pkgdir.split("/")
-    print(pkgname)
     print("Downloading {}".format(pkgname[-1]))
-    dlfile = open('dls/' + pkgname[-1], 'wb')
-    ftp.retrbinary('RETR /debian/' + pkgdir, dlfile.write)
+
+    #debug only
+    remotep = "debian/"+pkgdir
+    remotep = remotep.strip("\r\n")
+    localp = "dls/"+pkgname[-1]
+    localp = localp.strip("\r\n")
+    #debug only
+
+    ftp.cwd("/")
+    progress(remotep, localp)
+    #dlfile = open('dls/' + pkgname[-1], 'wb')
+    #ftp.retrbinary('get debian/' + pkgdir, dlfile.write)
 
 def pkgsearch():
     pkg = input("Search query: ")
@@ -144,9 +163,10 @@ def distsel():
         print("No such distribution found, server returned: {}\nTry again...".format(err))
         distsel()
 
-if mlsd_errored == "True":
+def mlsderror():
     print("Attempting non-MLSD directory listing...\n")
     print("---Distribution listing---")
+    total = 0
     try:
         for line in ftp.nlst():
             print(line)
@@ -154,9 +174,23 @@ if mlsd_errored == "True":
         print("---End of listing---")
         print("\nA total of {} items listed\nNOTE: Some of these items MIGHT NOT be distributions".format(total))
         distsel()
-    except:
+    except Exception as a:
         print("Attempted 2 supported methods, they didn't work, giving up...")
+        print(a)
         ftp.quit()
         os._exit(1)
 
-ftp.quit()
+def main():
+    print("---Distribution listing---")
+    total = 0
+
+    try:
+        for line in ftp.mlsd():
+            total += 1
+            print(line)
+        print("Total {} distributions available\n---End of listing---".format(total))
+    except ftplib.error_perm as err:
+        print("This server does not support MLSD, it returned: {}\n---End of listing---\n".format(err))
+        mlsderror()
+
+main()
